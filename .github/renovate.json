@@ -8,13 +8,15 @@
   "platformAutomerge": true,
   "packageRules": [
     {
-      "description": "Automerge minor, patch, pin, and digest updates",
+      "description": "Group and automerge all minor, patch, pin, and digest updates into a single PR",
       "matchUpdateTypes": [
         "minor",
         "patch",
         "pin",
         "digest"
       ],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch",
       "automerge": true
     }
   ],
