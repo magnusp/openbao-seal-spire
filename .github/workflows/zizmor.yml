@@ -1,10 +1,22 @@
 name: zizmor
 
 on:
+  schedule:
+    - cron: '0 0 * * *'
   push:
     branches: [ main ]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.github/zizmor.yml'
+      - 'zizmor.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.github/zizmor.yml'
+      - 'zizmor.yml'
 
 jobs:
   zizmor:
