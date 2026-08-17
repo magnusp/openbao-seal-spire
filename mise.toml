@@ -13,3 +13,4 @@ syft = "1.51.0"
 
 [hooks]
 postinstall = "pre-commit install --hook-type commit-msg"
+
