@@ -5,18 +5,8 @@ on:
     - cron: '0 0 * * *'
   push:
     branches: [ main ]
-    paths:
-      - '.github/workflows/**'
-      - '.github/actions/**'
-      - '.github/zizmor.yml'
-      - 'zizmor.yml'
   pull_request:
     branches: [ main ]
-    paths:
-      - '.github/workflows/**'
-      - '.github/actions/**'
-      - '.github/zizmor.yml'
-      - 'zizmor.yml'
 
 jobs:
   zizmor:
@@ -26,11 +16,25 @@ jobs:
       security-events: write
       contents: read
       actions: read
+      pull-requests: read
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Check for workflow changes
+        id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          filters: |
+            workflows:
+              - '.github/workflows/**'
+              - '.github/actions/**'
+              - '.github/zizmor.yml'
+              - 'zizmor.yml'
+              - '.pre-commit-config.yaml'
+
       - name: Run zizmor
+        if: github.event_name == 'schedule' || github.event_name == 'push' || steps.filter.outputs.workflows == 'true'
         uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
