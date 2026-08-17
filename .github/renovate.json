@@ -5,6 +5,19 @@
     ":semanticCommits",
     "helpers:pinGitHubActionDigests"
   ],
+  "platformAutomerge": true,
+  "packageRules": [
+    {
+      "description": "Automerge minor, patch, pin, and digest updates",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "automerge": true
+    }
+  ],
   "postUpdateOptions": [
     "gomodTidy"
   ],
