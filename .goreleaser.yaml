@@ -44,6 +44,7 @@ dockers_v2:
       - "ghcr.io/magnusp/openbao-seal-spire"
     tags:
       - "{{ .Version }}"
+      - "v{{ .Version }}"
       - "latest"
     dockerfile: Dockerfile
     labels:
