@@ -75,7 +75,6 @@ services:
       - "8201:8200"
     volumes:
       - openbao-config:/openbao/config:ro
-      - tls-data:/openbao/tls:ro
       - spire-agent-socket:/run/spire/sockets:ro
     depends_on:
       init-setup:

@@ -5,11 +5,11 @@ SOCKET_PATH="/tmp/spire-server/private/api.sock"
 TRANSIT_ADDR="https://openbao-transit:8200"
 
 echo "========================================================"
-echo "  Bootstrapping SPIRE and OpenBao Transit KMS"
+echo "  Bootstrapping SPIRE and OpenBao Transit KMS (Workload API mTLS)"
 echo "========================================================"
 
-# 1. Generate Root CA, Server Certs, and Client Certs
-echo "[1/6] Generating Root CA and mTLS Certificates..."
+# 1. Generate Root CA and Server/Admin Certs
+echo "[1/6] Generating Root CA and Transit Server Certificates..."
 mkdir -p /openbao/tls /openbao/config /opt/spire/conf /tmp/tls
 
 # Root CA
@@ -39,6 +39,7 @@ subjectAltName = @alt_names
 DNS.1 = openbao-transit
 DNS.2 = localhost
 IP.1 = 127.0.0.1
+URI.1 = spiffe://example.org/openbao-transit
 EOF
 
 openssl req -new -newkey rsa:2048 -nodes \
@@ -55,7 +56,7 @@ openssl x509 -req -in /tmp/tls/transit-server.csr \
   -extensions v3_req \
   -extfile /tmp/tls/transit_ext.cnf
 
-# Admin Client Cert (for init-setup)
+# Admin Client Cert (for init-setup bootstrapping)
 openssl req -new -newkey rsa:2048 -nodes \
   -keyout /openbao/tls/admin-client.key \
   -out /tmp/tls/admin-client.csr \
@@ -68,7 +69,7 @@ openssl x509 -req -in /tmp/tls/admin-client.csr \
   -out /openbao/tls/admin-client.crt \
   -days 365
 
-# SPIRE Server Client Cert
+# SPIRE Server Client Cert (for UpstreamAuthority cert_auth)
 openssl req -new -newkey rsa:2048 -nodes \
   -keyout /openbao/tls/spire-client.key \
   -out /tmp/tls/spire-client.csr \
@@ -79,19 +80,6 @@ openssl x509 -req -in /tmp/tls/spire-client.csr \
   -CAkey /openbao/tls/ca.key \
   -CAcreateserial \
   -out /openbao/tls/spire-client.crt \
-  -days 365
-
-# OpenBao Consumer Client Cert
-openssl req -new -newkey rsa:2048 -nodes \
-  -keyout /openbao/tls/consumer-client.key \
-  -out /tmp/tls/consumer-client.csr \
-  -subj "/CN=openbao-consumer"
-
-openssl x509 -req -in /tmp/tls/consumer-client.csr \
-  -CA /openbao/tls/ca.crt \
-  -CAkey /openbao/tls/ca.key \
-  -CAcreateserial \
-  -out /openbao/tls/consumer-client.crt \
   -days 365
 
 chmod 644 /openbao/tls/*.crt /openbao/tls/*.key || true
@@ -192,6 +180,7 @@ fi
 
 sed "s/__JOIN_TOKEN__/$JOIN_TOKEN/g" /config-src/agent.conf > /opt/spire/conf/agent.conf
 
+# Register Workload Entry for OpenBao Consumer (issues both X.509 SVID and JWT SVID)
 spire-server entry create -socketPath "$SOCKET_PATH" \
   -spiffeID "spiffe://example.org/openbao-consumer" \
   -parentID "spiffe://example.org/agent-node" \

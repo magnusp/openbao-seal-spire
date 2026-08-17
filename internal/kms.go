@@ -65,6 +65,8 @@ func (k *spireTransitKMS) Open(ctx context.Context, opts *kms.OpenOptions) error
 		JwtAuthRole      string `mapstructure:"jwt_auth_role"`
 		JwtAuthMountPath string `mapstructure:"jwt_auth_mount_path"`
 		SpiffeSocketPath string `mapstructure:"spiffe_socket_path"`
+		SpiffeServerID   string `mapstructure:"spiffe_server_id"`
+		SpiffeMtlsEnabled *bool `mapstructure:"spiffe_mtls_enabled"`
 
 		TLSServerName      string `mapstructure:"tls_server_name"`
 		TLSSkipVerify      bool   `mapstructure:"tls_skip_verify"`
@@ -85,11 +87,53 @@ func (k *spireTransitKMS) Open(ctx context.Context, opts *kms.OpenOptions) error
 		return fmt.Errorf("invalid trust_domain %q: %w", cfg.TrustDomain, err)
 	}
 
+	var serverID spiffeid.ID
+	if cfg.SpiffeServerID != "" {
+		serverID, err = spiffeid.FromString(cfg.SpiffeServerID)
+		if err != nil {
+			return fmt.Errorf("invalid spiffe_server_id %q: %w", cfg.SpiffeServerID, err)
+		}
+	}
+
 	if cfg.JwtAudience == "" {
 		return errors.New("missing required parameter 'jwt_audience'")
 	}
 	if cfg.JwtAuthRole == "" {
 		return errors.New("missing required parameter 'jwt_auth_role'")
+	}
+
+	hasFileClientCert := (cfg.TLSClientCertBytes != "")
+	hasFileClientKey := (cfg.TLSClientKeyBytes != "")
+	hasFileCA := (cfg.TLSCACertBytes != "")
+
+	var spiffeMtlsEnabled *bool
+	if cfg.SpiffeMtlsEnabled != nil && *cfg.SpiffeMtlsEnabled {
+		if hasFileClientCert || hasFileClientKey {
+			return errors.New("cannot configure file-based client certificate/key ('tls_client_cert_bytes'/'tls_client_key_bytes') when SPIFFE dynamic mTLS ('spiffe_mtls_enabled') is enabled")
+		}
+		if hasFileCA {
+			return errors.New("cannot configure file-based CA certificate ('tls_ca_cert_bytes') when SPIFFE dynamic mTLS ('spiffe_mtls_enabled') is enabled; trust bundle is streamed dynamically from SPIRE")
+		}
+		spiffeMtlsEnabled = cfg.SpiffeMtlsEnabled
+	} else if cfg.SpiffeMtlsEnabled != nil && !*cfg.SpiffeMtlsEnabled {
+		if !serverID.IsZero() {
+			return errors.New("cannot configure 'spiffe_server_id' when SPIFFE dynamic mTLS ('spiffe_mtls_enabled') is explicitly disabled")
+		}
+		spiffeMtlsEnabled = cfg.SpiffeMtlsEnabled
+	} else {
+		if hasFileClientCert || hasFileClientKey || hasFileCA {
+			if !serverID.IsZero() {
+				return errors.New("cannot configure 'spiffe_server_id' alongside file-based TLS parameters")
+			}
+			f := false
+			spiffeMtlsEnabled = &f
+		} else if strings.HasPrefix(cfg.Address, "https://") {
+			t := true
+			spiffeMtlsEnabled = &t
+		} else {
+			f := false
+			spiffeMtlsEnabled = &f
+		}
 	}
 
 	optStruct := &Options{
@@ -102,6 +146,8 @@ func (k *spireTransitKMS) Open(ctx context.Context, opts *kms.OpenOptions) error
 		JwtAuthRole:        cfg.JwtAuthRole,
 		JwtAuthMountPath:   cmp.Or(cfg.JwtAuthMountPath, DefaultJWTAuthMountPath),
 		SpiffeSocketPath:   cmp.Or(cfg.SpiffeSocketPath, DefaultSpiffeSocketPath),
+		SpiffeServerID:     serverID,
+		SpiffeMtlsEnabled:  spiffeMtlsEnabled,
 		MountPath:          cmp.Or(cfg.MountPath, DefaultTransitMountPath),
 		Address:            cmp.Or(cfg.Address, DefaultTransitAddress),
 		Namespace:          cfg.Namespace,

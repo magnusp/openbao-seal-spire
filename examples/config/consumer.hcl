@@ -15,10 +15,9 @@ seal "transit-spire" {
   jwt_auth_mount_path = "jwt"
   spiffe_socket_path  = "unix:///run/spire/sockets/agent.sock"
   disable_renewal     = "false"
-  tls_ca_cert         = "/openbao/tls/ca.crt"
-  tls_client_cert     = "/openbao/tls/consumer-client.crt"
-  tls_client_key      = "/openbao/tls/consumer-client.key"
-  tls_server_name     = "openbao-transit"
+  # Dynamic in-memory SPIFFE Workload API mTLS:
+  # Rotated X.509 SVIDs and root trust bundles are streamed in memory from SPIRE Agent.
+  # No client certificate or CA files needed on disk!
 }
 
 storage "inmem" {}

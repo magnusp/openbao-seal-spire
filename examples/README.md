@@ -1,6 +1,6 @@
-# OpenBao SPIRE KMS Docker Compose Example
+# OpenBao SPIRE KMS Docker Compose Example (Zero-Disk Dynamic mTLS)
 
-This example demonstrates an end-to-end deployment of **OpenBao Auto-Unseal with SPIRE authentication**, secured with **Mutual TLS (mTLS)** between OpenBao instances and SPIRE. The upstream OpenBao instance also serves as the **PKI Root CA** for the SPIRE topology.
+This example demonstrates an end-to-end deployment of **OpenBao Auto-Unseal with SPIRE authentication**, secured with in-memory **SPIFFE Workload API Mutual TLS (mTLS)** and JWT authentication.
 
 ---
 
@@ -27,31 +27,42 @@ This example demonstrates an end-to-end deployment of **OpenBao Auto-Unseal with
 |                                                                      |      agent.sock)         |  |
 |                                                                      +------------+-------------+  |
 |                                                                                   |                |
-|                                                                              Workload API          |
-|                                                                               (JWT-SVID)           |
+|                                                                             SPIFFE Workload API    |
+|                                                                            - In-Memory X.509 SVID  |
+|                                                                            - In-Memory JWT-SVID    |
 |                                                                                   v                |
-|                                    1. Secure Channel: Mutual TLS (mTLS) +-----------------------+  |
-|                                    2. Auth: SPIRE JWT-SVID              |    openbao-consumer   |  |
-|                                    <====================================|    Port: 8201         |  |
-|                                    3. Envelope Encryption via Transit   |    (transit-spire)    |  |
-|                                                                         +-----------------------+  |
+|                                    1. Dynamic mTLS (Zero-Disk X.509 SVID) +---------------------+  |
+|                                    2. Auth: SPIRE JWT-SVID                |   openbao-consumer  |  |
+|                                    <======================================|   Port: 8201        |  |
+|                                    3. Envelope Encryption via Transit     |   (transit-spire)   |  |
+|                                                                           +---------------------+  |
 +----------------------------------------------------------------------------------------------------+
 ```
 
-### Directory Layout
+### Security Highlights
 
-The example is organized compactly into:
+1. **Zero-Disk Client Identity**:
+   - `openbao-consumer` does **not** store any client certificates or private keys on disk.
+   - The plugin establishes an in-memory X.509 watcher via `/run/spire/sockets/agent.sock` using `go-spiffe/v2`'s `X509Source`.
+   - Rotations happen continuously and transparently in memory before expiration.
+2. **Dual-Layer SPIFFE Security**:
+   - **Transport Layer**: mTLS handshake verified against the trust domain `example.org` and server SPIFFE ID `spiffe://example.org/openbao-transit`.
+   - **Application Layer**: JWT-SVID passed to `auth/jwt/login` for KMS encryption and decryption policies.
+
+---
+
+## Directory Layout
 
 ```text
 examples/
-├── compose.yml           # Complete Compose stack definition
+├── compose.yml           # Compose services using official upstream images
 ├── Dockerfile            # Multi-stage build (setup & consumer plugin image)
 ├── setup.sh              # Single init & bootstrap orchestrator script
-├── README.md             # Architecture and testing guide
+├── README.md             # Architecture & step-by-step verification guide
 └── config/
     ├── server.conf       # SPIRE Server configuration
     ├── agent.conf        # SPIRE Agent configuration
-    ├── transit.hcl       # Upstream OpenBao KMS & PKI server configuration
+    ├── transit.hcl       # Upstream Transit KMS & PKI server configuration
     └── consumer.hcl      # Main OpenBao consumer instance configuration
 ```
 
@@ -101,7 +112,7 @@ Initialize the consumer instance with recovery shares:
 bao operator init -recovery-shares=1 -recovery-threshold=1
 ```
 
-Check the seal status again to confirm auto-unseal succeeded over mTLS:
+Check the seal status again to confirm auto-unseal succeeded over dynamic SPIFFE mTLS:
 
 ```bash
 bao status

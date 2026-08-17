@@ -8,12 +8,15 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"path"
+	"strconv"
 	"sync"
 
 	"github.com/hashicorp/go-hclog"
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
 	"github.com/openbao/openbao/api/v2"
+	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 )
 
 type TransitClient interface {
@@ -62,33 +65,63 @@ func NewSpireTransitClient(ctx context.Context, opts *Options, spireClient Spire
 		apiConfig.Address = opts.Address
 	}
 
-	tlsConfig := &api.TLSConfig{
-		TLSServerName: opts.TLSServerName,
-		Insecure:      opts.TLSSkipVerify,
-	}
-
-	hasTLSCaConfig := opts.TLSCaCert != "" || opts.TLSCaCertDir != "" || opts.TLSCaCertBytes != ""
-	if hasTLSCaConfig {
-		if !opts.WithDisallowEnvVars {
-			tlsConfig.CACert = opts.TLSCaCert
-			tlsConfig.CAPath = opts.TLSCaCertDir
+	if opts.SpiffeMtlsEnabled != nil && *opts.SpiffeMtlsEnabled {
+		// Dynamic in-memory SPIFFE Workload API mTLS
+		x509Source, err := spireClient.X509Source(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to obtain SPIFFE X509Source for dynamic mTLS: %w", err)
 		}
-		tlsConfig.CACertBytes = []byte(opts.TLSCaCertBytes)
-	}
 
-	hasTLSConfig := (opts.TLSClientCert != "" && opts.TLSClientKey != "") || (opts.TLSClientCertBytes != "" && opts.TLSClientKeyBytes != "")
-	if hasTLSConfig {
-		if !opts.WithDisallowEnvVars {
-			tlsConfig.ClientCert = opts.TLSClientCert
-			tlsConfig.ClientKey = opts.TLSClientKey
+		var authorizer tlsconfig.Authorizer
+		if !opts.SpiffeServerID.IsZero() {
+			authorizer = tlsconfig.AuthorizeID(opts.SpiffeServerID)
+		} else {
+			authorizer = tlsconfig.AuthorizeMemberOf(opts.TrustDomain)
 		}
-		tlsConfig.ClientCertBytes = []byte(opts.TLSClientCertBytes)
-		tlsConfig.ClientKeyBytes = []byte(opts.TLSClientKeyBytes)
-	}
 
-	if tlsConfig.Insecure || tlsConfig.TLSServerName != "" || hasTLSCaConfig || hasTLSConfig {
-		if err := apiConfig.ConfigureTLS(tlsConfig); err != nil {
-			return nil, nil, fmt.Errorf("failed to configure TLS: %w", err)
+		tlsConf := tlsconfig.MTLSClientConfig(x509Source, x509Source, authorizer)
+		if opts.TLSSkipVerify {
+			tlsConf.InsecureSkipVerify = true
+		}
+		if opts.TLSServerName != "" {
+			tlsConf.ServerName = opts.TLSServerName
+		}
+
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = tlsConf
+		apiConfig.HttpClient = &http.Client{
+			Transport: transport,
+		}
+	} else {
+		// File-based TLS or standard TLS
+		tlsConfig := &api.TLSConfig{
+			TLSServerName: opts.TLSServerName,
+			Insecure:      opts.TLSSkipVerify,
+		}
+
+		hasTLSCaConfig := opts.TLSCaCert != "" || opts.TLSCaCertDir != "" || opts.TLSCaCertBytes != ""
+		if hasTLSCaConfig {
+			if !opts.WithDisallowEnvVars {
+				tlsConfig.CACert = opts.TLSCaCert
+				tlsConfig.CAPath = opts.TLSCaCertDir
+			}
+			tlsConfig.CACertBytes = []byte(opts.TLSCaCertBytes)
+		}
+
+		hasTLSConfig := (opts.TLSClientCert != "" && opts.TLSClientKey != "") || (opts.TLSClientCertBytes != "" && opts.TLSClientKeyBytes != "")
+		if hasTLSConfig {
+			if !opts.WithDisallowEnvVars {
+				tlsConfig.ClientCert = opts.TLSClientCert
+				tlsConfig.ClientKey = opts.TLSClientKey
+			}
+			tlsConfig.ClientCertBytes = []byte(opts.TLSClientCertBytes)
+			tlsConfig.ClientKeyBytes = []byte(opts.TLSClientKeyBytes)
+		}
+
+		if tlsConfig.Insecure || tlsConfig.TLSServerName != "" || hasTLSCaConfig || hasTLSConfig {
+			if err := apiConfig.ConfigureTLS(tlsConfig); err != nil {
+				return nil, nil, fmt.Errorf("failed to configure TLS: %w", err)
+			}
 		}
 	}
 
@@ -129,6 +162,12 @@ func NewSpireTransitClient(ctx context.Context, opts *Options, spireClient Spire
 			"trust_domain":        opts.TrustDomain.String(),
 			"jwt_audience":        opts.JwtAudience,
 		},
+	}
+	if opts.SpiffeMtlsEnabled != nil {
+		wrapConfig.Metadata["spiffe_mtls_enabled"] = strconv.FormatBool(*opts.SpiffeMtlsEnabled)
+	}
+	if !opts.SpiffeServerID.IsZero() {
+		wrapConfig.Metadata["spiffe_server_id"] = opts.SpiffeServerID.String()
 	}
 	if opts.Namespace != "" {
 		wrapConfig.Metadata["namespace"] = opts.Namespace
@@ -251,17 +290,16 @@ func (c *SpireTransitClient) Encrypt(ctx context.Context, plaintext []byte) ([]b
 
 func (c *SpireTransitClient) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
 	decryptPath := path.Join(c.mountPath, "decrypt", c.keyName)
-
-	resp, err := c.client.Logical().WriteWithContext(ctx, decryptPath, map[string]interface{}{
+	data := map[string]interface{}{
 		"ciphertext": string(ciphertext),
-	})
+	}
+
+	resp, err := c.client.Logical().WriteWithContext(ctx, decryptPath, data)
 	if err != nil {
 		// If unauthorized, attempt a re-authentication and retry once
 		if isAuthError(err) {
 			if authErr := c.authenticate(ctx); authErr == nil {
-				resp, err = c.client.Logical().WriteWithContext(ctx, decryptPath, map[string]interface{}{
-					"ciphertext": string(ciphertext),
-				})
+				resp, err = c.client.Logical().WriteWithContext(ctx, decryptPath, data)
 			}
 		}
 	}
@@ -277,42 +315,29 @@ func (c *SpireTransitClient) Decrypt(ctx context.Context, ciphertext []byte) ([]
 		return nil, errors.New("plaintext missing or invalid in transit decrypt response")
 	}
 
-	plaintext, err := base64.StdEncoding.DecodeString(pt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to base64 decode plaintext from transit: %w", err)
-	}
-
-	return plaintext, nil
+	return base64.StdEncoding.DecodeString(pt)
 }
 
 func (c *SpireTransitClient) GetMountPath() string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	return c.mountPath
 }
 
 func (c *SpireTransitClient) GetApiClient() *api.Client {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	return c.client
 }
 
+// isAuthError checks if the given error represents an HTTP 401 Unauthorized or 403 Forbidden.
 func isAuthError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return errors.Is(err, api.ErrSecretNotFound) ||
-		containsSubstr(msg, "permission denied") ||
-		containsSubstr(msg, "invalid token") ||
-		containsSubstr(msg, "missing client token")
-}
-
-func containsSubstr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) > 0 && pathMatch(s, substr))
-}
-
-func pathMatch(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+	var respErr *api.ResponseError
+	if errors.As(err, &respErr) {
+		return respErr.StatusCode == 401 || respErr.StatusCode == 403
 	}
 	return false
 }

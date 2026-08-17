@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/hashicorp/go-hclog"
@@ -36,10 +37,12 @@ const (
 	EnvTransitWrapperDisableRenewal   = "TRANSIT_WRAPPER_DISABLE_RENEWAL"
 	EnvVaultTransitSealDisableRenewal = "VAULT_TRANSIT_SEAL_DISABLE_RENEWAL"
 
-	EnvSpireTrustDomain  = "SPIRE_TRUST_DOMAIN"
-	EnvSpireJwtAudience  = "SPIRE_JWT_AUDIENCE"
-	EnvSpireJwtAuthRole  = "SPIRE_JWT_AUTH_ROLE"
-	EnvSpireJwtAuthMount = "SPIRE_JWT_AUTH_MOUNT_PATH"
+	EnvSpireTrustDomain   = "SPIRE_TRUST_DOMAIN"
+	EnvSpireJwtAudience   = "SPIRE_JWT_AUDIENCE"
+	EnvSpireJwtAuthRole   = "SPIRE_JWT_AUTH_ROLE"
+	EnvSpireJwtAuthMount  = "SPIRE_JWT_AUTH_MOUNT_PATH"
+	EnvSpireServerID      = "SPIRE_SERVER_ID"
+	EnvSpireMtlsEnabled   = "SPIRE_MTLS_ENABLED"
 )
 
 // Options holds all configuration parameters for the SPIRE Transit wrapper.
@@ -53,6 +56,11 @@ type Options struct {
 	JwtAuthRole      string
 	JwtAuthMountPath string
 	SpiffeSocketPath string
+
+	// SpiffeMtlsEnabled controls whether dynamic in-memory SPIFFE Workload API mTLS is used.
+	SpiffeMtlsEnabled *bool
+	// SpiffeServerID is the expected SPIFFE ID of the upstream Transit server for mTLS authorization.
+	SpiffeServerID spiffeid.ID
 
 	MountPath          string
 	KeyName            string
@@ -101,6 +109,8 @@ func GetOpts(opt ...wrapping.Option) (*Options, error) {
 
 	var disableRenewalRaw string
 	var trustDomainRaw string
+	var spiffeServerIDRaw string
+	var spiffeMtlsEnabledRaw string
 
 	for k, v := range opts.WithConfigMap {
 		switch k {
@@ -114,6 +124,10 @@ func GetOpts(opt ...wrapping.Option) (*Options, error) {
 			opts.JwtAuthMountPath = v
 		case "spiffe_socket_path", "spire_agent_address":
 			opts.SpiffeSocketPath = v
+		case "spiffe_server_id", "spire_server_id", "server_spiffe_id":
+			spiffeServerIDRaw = v
+		case "spiffe_mtls_enabled", "spire_mtls_enabled":
+			spiffeMtlsEnabledRaw = v
 		case "mount_path":
 			opts.MountPath = v
 		case "key_name":
@@ -169,6 +183,12 @@ func GetOpts(opt ...wrapping.Option) (*Options, error) {
 				opts.SpiffeSocketPath = envSocket
 			}
 		}
+		if spiffeServerIDRaw == "" {
+			spiffeServerIDRaw = os.Getenv(EnvSpireServerID)
+		}
+		if spiffeMtlsEnabledRaw == "" {
+			spiffeMtlsEnabledRaw = os.Getenv(EnvSpireMtlsEnabled)
+		}
 		if opts.MountPath == DefaultTransitMountPath {
 			if envMount := os.Getenv(EnvTransitWrapperMountPath); envMount != "" {
 				opts.MountPath = envMount
@@ -215,6 +235,14 @@ func GetOpts(opt ...wrapping.Option) (*Options, error) {
 		}
 	}
 
+	if spiffeMtlsEnabledRaw != "" {
+		b, err := strconv.ParseBool(spiffeMtlsEnabledRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid boolean value for spiffe_mtls_enabled: %w", err)
+		}
+		opts.SpiffeMtlsEnabled = &b
+	}
+
 	// Validate required parameters
 	if trustDomainRaw == "" {
 		return nil, errors.New("trust_domain is required")
@@ -225,6 +253,14 @@ func GetOpts(opt ...wrapping.Option) (*Options, error) {
 	}
 	opts.TrustDomain = td
 
+	if spiffeServerIDRaw != "" {
+		serverID, err := spiffeid.FromString(spiffeServerIDRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid spiffe_server_id %q: %w", spiffeServerIDRaw, err)
+		}
+		opts.SpiffeServerID = serverID
+	}
+
 	if opts.JwtAudience == "" {
 		return nil, errors.New("jwt_audience is required")
 	}
@@ -233,6 +269,39 @@ func GetOpts(opt ...wrapping.Option) (*Options, error) {
 	}
 	if opts.KeyName == "" {
 		return nil, errors.New("key_name is required")
+	}
+
+	hasFileClientCert := (opts.TLSClientCert != "" || opts.TLSClientCertBytes != "")
+	hasFileClientKey := (opts.TLSClientKey != "" || opts.TLSClientKeyBytes != "")
+	hasFileCA := (opts.TLSCaCert != "" || opts.TLSCaCertDir != "" || opts.TLSCaCertBytes != "")
+
+	// Enforce mutual exclusivity between file-based TLS and SPIFFE dynamic Workload API mTLS
+	if opts.SpiffeMtlsEnabled != nil && *opts.SpiffeMtlsEnabled {
+		if hasFileClientCert || hasFileClientKey {
+			return nil, errors.New("cannot configure file-based client certificate/key ('tls_client_cert'/'tls_client_key') when SPIFFE dynamic mTLS ('spiffe_mtls_enabled') is enabled")
+		}
+		if hasFileCA {
+			return nil, errors.New("cannot configure file-based CA certificate ('tls_ca_cert'/'tls_ca_path') when SPIFFE dynamic mTLS ('spiffe_mtls_enabled') is enabled; trust bundle is streamed dynamically from SPIRE")
+		}
+	} else if opts.SpiffeMtlsEnabled != nil && !*opts.SpiffeMtlsEnabled {
+		if !opts.SpiffeServerID.IsZero() {
+			return nil, errors.New("cannot configure 'spiffe_server_id' when SPIFFE dynamic mTLS ('spiffe_mtls_enabled') is explicitly disabled")
+		}
+	} else {
+		// When spiffe_mtls_enabled is not explicitly specified:
+		if hasFileClientCert || hasFileClientKey || hasFileCA {
+			if !opts.SpiffeServerID.IsZero() {
+				return nil, errors.New("cannot configure 'spiffe_server_id' alongside file-based TLS parameters ('tls_client_cert'/'tls_ca_cert')")
+			}
+			f := false
+			opts.SpiffeMtlsEnabled = &f
+		} else if strings.HasPrefix(opts.Address, "https://") {
+			t := true
+			opts.SpiffeMtlsEnabled = &t
+		} else {
+			f := false
+			opts.SpiffeMtlsEnabled = &f
+		}
 	}
 
 	return opts, nil

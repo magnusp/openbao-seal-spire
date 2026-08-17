@@ -16,6 +16,7 @@ import (
 
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,6 +33,10 @@ func (m *mockSpireClient) FetchJWTSVID(ctx context.Context, audience string) (st
 		return "", m.err
 	}
 	return m.token, nil
+}
+
+func (m *mockSpireClient) X509Source(ctx context.Context) (*workloadapi.X509Source, error) {
+	return nil, nil
 }
 
 func (m *mockSpireClient) Close() error {
