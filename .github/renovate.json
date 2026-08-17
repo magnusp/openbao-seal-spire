@@ -11,7 +11,9 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["(^|/)mise\\.toml$"],
+      "managerFilePatterns": [
+        "/(^|/)mise\\.toml$/"
+      ],
       "matchStrings": [
         "\"go:(?<depName>[^\"]+)\"\\s*=\\s*\"(?<currentValue>[^\"]+)\""
       ],
