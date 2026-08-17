@@ -1,0 +1,66 @@
+version: 2
+
+project_name: openbao-seal-spire
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: openbao-seal-spire
+    main: ./cmd/openbao-seal-spire
+    binary: openbao-seal-spire
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+dockers_v2:
+  - id: openbao-seal-spire
+    images:
+      - "ghcr.io/magnusp/openbao-seal-spire"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
+    dockerfile: Dockerfile
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "SPIRE Auto-Unseal & KMS Plugin for OpenBao"
+      org.opencontainers.image.source: "https://github.com/magnusp/openbao-seal-spire"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: "Apache-2.0"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

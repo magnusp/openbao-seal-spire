@@ -7,3 +7,4 @@ go.work.sum
 *.key
 *.pem
 bin/
+dist/
