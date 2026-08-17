@@ -8,3 +8,5 @@ go.work.sum
 *.pem
 bin/
 dist/
+mise.local.toml
+.mise.local.toml
