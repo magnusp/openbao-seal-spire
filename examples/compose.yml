@@ -1,0 +1,94 @@
+services:
+  openbao-transit:
+    image: openbao/openbao:latest
+    container_name: openbao-transit
+    hostname: openbao-transit
+    command: ["bao", "server", "-config=/openbao/config/transit.hcl"]
+    ports:
+      - "8200:8200"
+    volumes:
+      - openbao-config:/openbao/config:ro
+      - tls-data:/openbao/tls:ro
+    cap_add:
+      - IPC_LOCK
+    restart: on-failure
+
+  init-setup:
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile
+      target: setup
+    container_name: init-setup
+    volumes:
+      - ./config:/config-src:ro
+      - openbao-config:/openbao/config:rw
+      - spire-config:/opt/spire/conf:rw
+      - tls-data:/openbao/tls:rw
+      - spire-server-socket:/tmp/spire-server:rw
+      - spire-agent-socket:/run/spire/sockets:rw
+
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.11.0
+    container_name: spire-server
+    hostname: spire-server
+    command: ["-config", "/opt/spire/conf/server.conf"]
+    volumes:
+      - spire-config:/opt/spire/conf:ro
+      - tls-data:/openbao/tls:ro
+      - spire-server-socket:/tmp/spire-server:rw
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck", "-socketPath", "/tmp/spire-server/private/api.sock"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: on-failure
+
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.11.0
+    container_name: spire-agent
+    hostname: spire-agent
+    pid: host
+    command: ["-config", "/opt/spire/conf/agent.conf"]
+    depends_on:
+      init-setup:
+        condition: service_completed_successfully
+      spire-server:
+        condition: service_healthy
+    volumes:
+      - spire-config:/opt/spire/conf:ro
+      - tls-data:/openbao/tls:ro
+      - spire-agent-socket:/run/spire/sockets:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: on-failure
+
+  openbao-consumer:
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile
+      target: consumer
+    container_name: openbao-consumer
+    hostname: openbao-consumer
+    command: ["bao", "server", "-config=/openbao/config/consumer.hcl"]
+    ports:
+      - "8201:8200"
+    volumes:
+      - openbao-config:/openbao/config:ro
+      - tls-data:/openbao/tls:ro
+      - spire-agent-socket:/run/spire/sockets:ro
+    depends_on:
+      init-setup:
+        condition: service_completed_successfully
+      spire-agent:
+        condition: service_started
+    cap_add:
+      - IPC_LOCK
+    restart: on-failure
+
+volumes:
+  openbao-config:
+  spire-config:
+  tls-data:
+  spire-server-socket:
+  spire-agent-socket:
