@@ -7,6 +7,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  merge_group:
 
 jobs:
   zizmor:
@@ -24,6 +25,7 @@ jobs:
           persist-credentials: false
 
       - name: Check for workflow changes
+        if: github.event_name == 'pull_request'
         id: filter
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         with:
@@ -36,5 +38,5 @@ jobs:
               - '.pre-commit-config.yaml'
 
       - name: Run zizmor
-        if: github.event_name == 'schedule' || github.event_name == 'push' || steps.filter.outputs.workflows == 'true'
+        if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'merge_group' || steps.filter.outputs.workflows == 'true'
         uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
