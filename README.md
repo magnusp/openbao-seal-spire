@@ -1,5 +1,7 @@
 # openbao-seal-spire
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/magnusp/openbao-seal-spire/badge)](https://securityscorecards.dev/viewer/?uri=github.com/magnusp/openbao-seal-spire)
+
 `openbao-seal-spire` is a standalone KMS & Auto-Unseal plugin for [OpenBao](https://openbao.org) that wraps the OpenBao/Vault Transit secret engine using dynamic **SPIFFE/SPIRE** authentication and **in-memory Workload API mTLS**.
 
 Instead of requiring static root tokens or file-based certificates on disk, this plugin connects to the local **SPIRE Agent** over the SPIFFE Workload API (`agent.sock`), retrieves dynamic X.509 SVIDs for transport mTLS and JWT-SVIDs for application authentication, and talks to upstream OpenBao securely with zero disk credentials.
