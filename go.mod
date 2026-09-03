@@ -3,7 +3,7 @@ module github.com/magnusp/openbao-seal-spire
 go 1.26.0
 
 require (
-	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/openbao/go-kms-wrapping/plugin/v2 v2.3.0
