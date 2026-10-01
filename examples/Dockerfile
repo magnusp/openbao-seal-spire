@@ -1,5 +1,5 @@
 # Stage 1: Build openbao-seal-spire plugin
-FROM golang:1.26-alpine AS plugin-builder
+FROM golang:1.27-alpine AS plugin-builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
