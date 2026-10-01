@@ -1,6 +1,8 @@
 module github.com/magnusp/openbao-seal-spire
 
-go 1.26.0
+go 1.27.0
+
+toolchain go1.27.1
 
 require (
 	github.com/go-jose/go-jose/v4 v4.1.4
