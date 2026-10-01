@@ -30,8 +30,8 @@ func StartOpenBaoContainer(ctx context.Context) (*OpenBaoContainer, error) {
 		Image:        "openbao/openbao:latest",
 		ExposedPorts: []string{"8200/tcp"},
 		Env: map[string]string{
-			"VAULT_DEV_ROOT_TOKEN_ID":  rootToken,
-			"VAULT_DEV_LISTEN_ADDRESS": "0.0.0.0:8200",
+			"BAO_DEV_ROOT_TOKEN_ID":  rootToken,
+			"BAO_DEV_LISTEN_ADDRESS": "0.0.0.0:8200",
 		},
 		WaitingFor: wait.ForHTTP("/v1/sys/health").
 			WithPort("8200/tcp").

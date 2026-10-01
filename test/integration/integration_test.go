@@ -9,7 +9,9 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/json"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -18,7 +20,9 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/magnusp/openbao-seal-spire/internal"
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
+	"github.com/openbao/openbao/api/v2"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,21 +39,12 @@ func newSpireIntegrationMock(td string) (*spireIntegrationMock, string, error) {
 	}
 
 	keyID := "test-key-id"
-	jwk := jose.JSONWebKey{
-		Key:       &rsaKey.PublicKey,
-		KeyID:     keyID,
-		Algorithm: string(jose.RS256),
-		Use:       "sig",
-	}
 
-	jwks := jose.JSONWebKeySet{
-		Keys: []jose.JSONWebKey{jwk},
-	}
-
-	jwksBytes, err := json.Marshal(jwks)
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&rsaKey.PublicKey)
 	if err != nil {
 		return nil, "", err
 	}
+	publicKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicKeyDER})
 
 	trustDomain, err := spiffeid.TrustDomainFromString(td)
 	if err != nil {
@@ -60,7 +55,7 @@ func newSpireIntegrationMock(td string) (*spireIntegrationMock, string, error) {
 		rsaKey:      rsaKey,
 		trustDomain: trustDomain,
 		keyID:       keyID,
-	}, string(jwksBytes), nil
+	}, string(publicKeyPEM), nil
 }
 
 func (s *spireIntegrationMock) FetchJWTSVID(ctx context.Context, audience string) (string, error) {
@@ -89,6 +84,10 @@ func (s *spireIntegrationMock) FetchJWTSVID(ctx context.Context, audience string
 	return jwt.Signed(signer).Claims(claims).Serialize()
 }
 
+func (s *spireIntegrationMock) X509Source(ctx context.Context) (*workloadapi.X509Source, error) {
+	return nil, errors.New("x509 source is not supported by the integration mock")
+}
+
 func (s *spireIntegrationMock) Close() error {
 	return nil
 }
@@ -112,7 +111,7 @@ func TestIntegration_OpenBao_Spire_Seal(t *testing.T) {
 
 	// 2. Setup mock SPIRE JWT signer & JWKS
 	trustDomain := "example.org"
-	spireMock, jwksJSON, err := newSpireIntegrationMock(trustDomain)
+	spireMock, publicKeyPEM, err := newSpireIntegrationMock(trustDomain)
 	require.NoError(t, err)
 
 	// 3. Configure OpenBao Transit secret engine
@@ -134,10 +133,9 @@ func TestIntegration_OpenBao_Spire_Seal(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Write JWT auth config with static JWKS
+	// Write JWT auth config with the mock SPIRE public key
 	_, err = client.Logical().WriteWithContext(ctx, "auth/jwt/config", map[string]interface{}{
-		"jwt_validation_pubkeys": []string{},
-		"jwks_json":              jwksJSON,
+		"jwt_validation_pubkeys": []string{publicKeyPEM},
 		"default_role":           "kms-role",
 	})
 	require.NoError(t, err)
@@ -188,7 +186,7 @@ path "transit/decrypt/autounseal" {
 
 	keyId, err := wrapper.KeyId(ctx)
 	require.NoError(t, err)
-	require.Equal(t, "autounseal", keyId)
+	require.Equal(t, "v1", keyId)
 
 	// 7. Test Decrypt against live OpenBao
 	decrypted, err := wrapper.Decrypt(ctx, blob)
