@@ -11,7 +11,7 @@ require (
 	github.com/openbao/go-kms-wrapping/plugin/v2 v2.4.0
 	github.com/openbao/go-kms-wrapping/v2 v2.9.0
 	github.com/openbao/openbao/api/v2 v2.7.1
-	github.com/spiffe/go-spiffe/v2 v2.8.2
+	github.com/spiffe/go-spiffe/v2 v2.9.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 )
